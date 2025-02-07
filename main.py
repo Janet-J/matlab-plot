@@ -6,12 +6,12 @@ from sklearn.svm import LinearSVR
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.layers import SimpleRNN, GRU
-from tensorflow.keras.layers import LSTM
-from tensorflow.keras.layers import Dropout
-from tensorflow.keras.optimizers import SGD
+from scipy.io.wavfile import write
+from tensorflow.python.keras.layers import Dense
+from tensorflow.python.keras.layers import SimpleRNN
+from tensorflow.python.keras.layers import LSTMV1
+from tensorflow.python.keras.layers import Dropout
+# from tensorflow.python.keras.optimizers import SGD
 import os
 
 
@@ -51,30 +51,30 @@ def networks(md, X_train, y_train):
         model.compile(optimizer='rmsprop', loss='mean_squared_error')
         model.fit(X_train, y_train, epochs=20, batch_size=200, verbose=0)
 
-    elif md == 'gru':
-        # The GRU architecture
-        model = Sequential()
-        # First GRU layer with Dropout regularisation
-        model.add(GRU(units=32, return_sequences=True, input_shape=(
-            X_train.shape[1], 1), activation='tanh'))
-        model.add(Dropout(0.2))
-        # Second GRU layer
-        model.add(GRU(units=32, return_sequences=True, activation='tanh'))
-        model.add(Dropout(0.2))
+    # elif md == 'gru':
+    #     # The GRU architecture
+    #     model = Sequential()
+    #     # First GRU layer with Dropout regularisation
+    #     model.add(GRU(units=32, return_sequences=True, input_shape=(
+    #         X_train.shape[1], 1), activation='tanh'))
+    #     model.add(Dropout(0.2))
+    #     # Second GRU layer
+    #     model.add(GRU(units=32, return_sequences=True, activation='tanh'))
+    #     model.add(Dropout(0.2))
 
-        # Third GRU layer
-        model.add(GRU(units=32, return_sequences=True, activation='tanh'))
-        model.add(Dropout(0.2))
-        # Fourth GRU layer
-        model.add(GRU(units=32, activation='tanh'))
-        model.add(Dropout(0.2))
-        # The output layer
-        model.add(Dense(units=1))
-        # Compiling the RNN
-        model.compile(optimizer=SGD(lr=0.01, decay=1e-7,
-                      momentum=0.6, nesterov=False), loss='mean_squared_error')
-        # Fitting to the training set
-        model.fit(X_train, y_train, epochs=50, batch_size=128, verbose=0)
+    #     # Third GRU layer
+    #     model.add(GRU(units=32, return_sequences=True, activation='tanh'))
+    #     model.add(Dropout(0.2))
+    #     # Fourth GRU layer
+    #     model.add(GRU(units=32, activation='tanh'))
+    #     model.add(Dropout(0.2))
+    #     # The output layer
+    #     model.add(Dense(units=1))
+    #     # Compiling the RNN
+    #     model.compile(optimizer=SGD(lr=0.01, decay=1e-7,
+    #                   momentum=0.6, nesterov=False), loss='mean_squared_error')
+    #     # Fitting to the training set
+    #     model.fit(X_train, y_train, epochs=50, batch_size=128, verbose=0)
 
     elif md == 'random_forest':
         model = RandomForestRegressor(n_estimators=100, random_state=42)
@@ -125,54 +125,49 @@ def calculations(file_path, model_name):
     X_test = test_data
     plt.plot(X_test)
     X_test = np.array(test_data)
-# X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+    
+    if model_name in ['lstm', 'simple_rnn', 'gru']:
+        X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+
     predicted_recon_audio = model.predict(X_test)
 
-    #final_mat = original_drop_mat.copy()
     final_mat = stego_mat.copy()
-    for ind, val in enumerate(predicted_recon_audio):
-        final_mat.iloc[nan_index[ind]] = val
+    min_length = min(len(nan_index), len(predicted_recon_audio))
 
-    reconstructed_audio = {"reconL": final_mat.values, "Fs": float(22050)}
-    sp.savemat(file_path+model_name +
-               "longer_reconstructed_audio.mat", reconstructed_audio)
+    for i in range(min_length):
+        final_mat.iloc[nan_index[i]] = predicted_recon_audio[i]
 
-    values_view = reconstructed_audio.values()
-    value_iterator = iter(values_view)
-    first_value = next(value_iterator)
-    recon_mat = pd.DataFrame(first_value)
-    frames = pd.concat(
-        [original_mat, recon_mat, stego_mat, stego_recon], axis=1)
+    signalOut = final_mat.values
+    reconstructed_audio = {"reconL": final_mat.values, "Fs": 22050.0}
+    sp.savemat(file_path + model_name + "_reconstructed_audio.mat", reconstructed_audio)
+    write(file_path + 'OutAudio/reconstructedRF.wav', 22050, signalOut.astype(np.float64))
 
+    recon_mat = pd.DataFrame(final_mat.values)
+    frames = pd.concat([original_mat, recon_mat, stego_mat, stego_recon], axis=1)
     frames.columns = ['original', model_name, 'stego_audio', 'stego_recon']
-
     print(frames.corr())
 
-    plt.figure(figsize=(20, 10))
-    plt.plot(original_mat, color='blue', label='Original Audio')
-    plt.plot(recon_mat, color='red', label='Reconstructed Audio')
-    plt.title('Audio Reconstruction')
-    plt.xlabel('Sample')
-    plt.ylabel('Amplitude')
-    plt.legend()
+    fig, axes = plt.subplots(4, 1, figsize=(20, 10))
+    axes[0].plot(original_mat, color='blue', label='Original Audio')
+    axes[0].set_title('Original Audio')
+    axes[1].plot(recon_mat, color='red', label='Reconstructed Audio')
+    axes[1].set_title('Reconstructed Audio')
+    axes[2].plot(recon_mat, color='red', label='Reconstructed Audio (SVR)')
+    axes[2].set_title('SVR Reconstructed Audio')
+    axes[3].plot(stego_mat, color='green', label='Dropped Audio')
+    axes[3].set_title('Dropped Audio')
+
+    for ax in axes:
+        ax.set_xlabel('Sample')
+        ax.set_ylabel('Amplitude')
+        ax.legend()
+
+    plt.tight_layout()
+    plt.savefig(file_path + 'outputRF.jpg')
     plt.show()
 
 
-model_name = 'svr'
+model_name = 'random_forest'
+file_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/'
 
-grand_directory_contents = os.listdir('./')
-for grand_item in grand_directory_contents:
-    if (os.path.isdir(grand_item)) and ('ipynb' not in grand_item):
-        print(grand_item)
-
-        directory_contents = os.listdir('./'+grand_item)
-        for item in directory_contents:
-            if (os.path.isdir('./'+grand_item+'/'+item)) and ('min' in item):
-                print(item)
-
-                sub_directory_contents = os.listdir('./'+grand_item+'/'+item)
-                for sub_dir_item in sub_directory_contents:
-                    print(sub_dir_item+' seconds')
-
-                    file_path = './'+grand_item+'/'+item+'/'+sub_dir_item+'/'
-                    calculations(file_path, model_name)
+calculations(file_path, model_name)
