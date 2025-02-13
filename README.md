@@ -8,7 +8,7 @@ This research based project aims addresses the issues in several audio processin
 
 The image below shows the reconstruction of lost audio signals with four different techniques: Steganoflage, Random Forest, SVR (Support Vector Regressor) and LSTM (Long Short Term Memory).
 
-![alt text](output.jpg)
+![alt text](C:\Users\HP\Desktop\TestProject\audio_reconstruction_project\OutAudioplots\output1.png)
 
 ## Demo Audio
 
