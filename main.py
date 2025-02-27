@@ -9,10 +9,12 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from scipy.signal import resample
 from sklearn.metrics import mean_squared_error
+import soundfile as sf
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, SimpleRNN, GRU, LSTM, Dropout
+from tensorflow.keras.layers import Dense, SimpleRNN, GRU, LSTM, Dropout, BatchNormalization
 from tensorflow.keras.optimizers import SGD
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.callbacks import EarlyStopping
 import librosa
 import librosa.display
@@ -28,9 +30,9 @@ def networks(md, X_train, y_train):
     if md == 'lstm':
         model = Sequential()
         early_stop = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
-        model.add(LSTM(units=64, return_sequences=True, input_shape=(X_train.shape[1], 1)))
+        model.add(LSTM(units=128, return_sequences=True, input_shape=(X_train.shape[1], 1)))
         model.add(Dropout(0.2))
-        model.add(LSTM(units=64, return_sequences=True))
+        model.add(LSTM(units=128, return_sequences=True))
         model.add(Dropout(0.2))
         model.add(LSTM(units=64))
         model.add(Dropout(0.2))
@@ -38,32 +40,39 @@ def networks(md, X_train, y_train):
 
         opt = tf.keras.optimizers.Adam(learning_rate=0.001)
         model.compile(optimizer=opt, loss='mean_squared_error', metrics=['accuracy'])
-        model.fit(X_train, y_train, epochs=20, batch_size=128, callbacks=[early_stop], verbose=1)
+        model.fit(X_train, y_train, epochs=10, batch_size=128, callbacks=[early_stop], verbose=1)
 
     elif md == 'simple_rnn':
         model = Sequential()
-        model.add(SimpleRNN(256, return_sequences=True, input_shape=(X_train.shape[1], 1)))
-        model.add(SimpleRNN(256, return_sequences=True))
-        model.add(SimpleRNN(256, return_sequences=True))
+        model.add(SimpleRNN(128, return_sequences=True, ))
+        model.add(BatchNormalization())
+        model.add(Dropout(0.2))
+        model.add(SimpleRNN(128, return_sequences=True))
+        model.add(BatchNormalization())
+        model.add(Dropout(0.2))
+        model.add(SimpleRNN(128, return_sequences=False))
+        model.add(BatchNormalization())
+        model.add(Dropout(0.2))
         model.add(Dense(units=1))
 
-        model.compile(optimizer='rmsprop', loss='mean_squared_error')
-        model.fit(X_train, y_train, epochs=20, batch_size=128, verbose=1)
+        model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
+        early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+        model.fit(X_train, y_train, epochs=50, batch_size=64, callbacks=[early_stopping], verbose=1)
 
     elif md == 'gru':
         model = Sequential()
-        model.add(GRU(units=265, return_sequences=True, input_shape=(X_train.shape[1], 1), activation='tanh'))
+        model.add(GRU(units=265, return_sequences=True, input_shape=(X_train.shape[1], 1)))
         model.add(Dropout(0.2))
-        model.add(GRU(units=128, return_sequences=True, activation='tanh'))
+        model.add(GRU(units=128, return_sequences=True))
         model.add(Dropout(0.2))
-        model.add(GRU(units=64, return_sequences=True, activation='tanh'))
+        model.add(GRU(units=64, return_sequences=True))
         model.add(Dropout(0.2))
-        model.add(GRU(units=32, activation='tanh'))
+        model.add(GRU(units=32))
         model.add(Dropout(0.2))
         model.add(Dense(units=1))
 
-        model.compile(optimizer=SGD(learning_rate=0.01, decay=1e-7, momentum=0.6, nesterov=False), loss='mean_squared_error')
-        model.fit(X_train, y_train, epochs=30, batch_size=128, verbose=1)
+        model.compile(optimizer='Adam', loss='mean_squared_error')
+        model.fit(X_train, y_train, epochs=25, batch_size=128, verbose=1)
 
     elif md == 'random_forest':
         model = RandomForestRegressor(n_estimators=200, random_state=42)
@@ -124,9 +133,14 @@ def calculations(file_path, model_name):
         final_mat.iloc[nan_index[i]] = predicted_recon_audio[i]
 
     signalOut = final_mat.values
-    reconstructed_audio = {"reconL": final_mat.values, "Fs": 44100}
+    reconstructed_audio = {"reconL": final_mat.values, "Fs": 22050}
     sp.savemat(file_path + model_name + "_reconstructed_audio.mat", reconstructed_audio)
-    write(file_path + 'OutAudio/reconstructedrandom_forest1.wav', 44100, signalOut.astype(np.float64))
+    write(file_path + '/OutAudio5/reconstructed.wav', 22050, signalOut.astype(np.float64))
+    #reconstructed_audio = {"reconL": final_mat.values, "Fs": float(22050)}
+    stego_audio = stego_mat.values.flatten()
+
+# Save the stego audio as a .wav file
+    write(file_path + '/OutAudio5/stego_audio.wav', 22050, stego_audio.astype(np.float64))
 
     recon_mat = pd.DataFrame(final_mat.values)
     frames = pd.concat([original_mat, recon_mat, stego_mat, stego_recon], axis=1)
@@ -136,8 +150,8 @@ def calculations(file_path, model_name):
     fig, axes = plt.subplots(4, 1, figsize=(20, 10))
     axes[0].plot(original_mat, color='blue', label='Original Audio')
     axes[0].set_title('Original Audio')
-    axes[1].plot(stego_recon, color='red', label='Reconstructed Audio (random_forest)')
-    axes[1].set_title('random_forest Reconstructed Audio')
+    axes[1].plot(stego_recon, color='red', label='Reconstructed Audio (gru)')
+    axes[1].set_title('gru Reconstructed Audio')
     axes[2].plot(stego_mat, color='green', label='Dropped Audio')
     axes[2].set_title('Dropped Audio')
 
@@ -147,240 +161,188 @@ def calculations(file_path, model_name):
         ax.legend()
 
     plt.tight_layout()
-    plt.savefig(r'C:\Users\HP\Desktop\TestProject\audio_reconstruction_project\simple_rnn_plots\outputrandom_forest1.jpg')
+    #plt.savefig(r'C:\Users\HP\Desktop\TestProject\audio_reconstruction_project\plots\outputlstm.jpg')
     plt.show()
 
-# Run the model
-model_name = 'random_forest'
-file_path =  'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/'
+# svr
+model_name = 'lstm'
+file_path =  './'
 #calculations(file_path, model_name)
 print("Done")
 
-
-
-
-# Folder path where your .wav files are stored
-folder_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/OutAudio'
+# Set the folder path containing the .wav files
+folder_path = './OutAudio1'
 
 # Get all .wav files in the folder
 wav_files = [f for f in os.listdir(folder_path) if f.endswith(".wav")]
 
-# Initialize the plot
-plt.figure(figsize=(12, 6))
-
-# Iterate through all the .wav files and plot them
+# Iterate through each file and print its sample rate
 for wav_file in wav_files:
+    # Get the full path of the file
     file_path = os.path.join(folder_path, wav_file)
     
-    # Load the .wav file
-    sample_rate, audio_data = wavfile.read(file_path)
-
-    # Normalize the audio data to ensure all signals fit in the same range
-    audio_data = audio_data / (np.max(np.abs(audio_data)) + 1e-10)  # Avoid division by zero
-
-    # Plot the waveform
-    plt.plot(audio_data, label=f'{wav_file}')
-
-# Add title, labels, legend, and grid
-plt.title('Comparison of Waveforms from OutAudio Folder')
-plt.xlabel('Sample Index')
-plt.ylabel('Normalized Amplitude')
-plt.legend(loc='upper right')
-plt.grid()
-
-# Display the plot
-plt.tight_layout()
-plt.show()
-
-#*******************************************************************************************
-#plotting the  sapmle sample_rate
-#***************************************************************************************
-folder_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/OutAudio'
-
-# Get all .wav files in the folder
-wav_files = [f for f in os.listdir(folder_path) if f.endswith(".wav")]
-# Create a new figure for waveform plots
+    # Read the .wav file to get its sample rate
+    sample_rate, _ = wavfile.read(file_path)
+    
+    # Output the file name and sample rate
+    print(f"File: {wav_file}, Sample Rate: {sample_rate} Hz")
+    
 
 
-# Plot the waveform of each audio file
-for wav_file in wav_files:
-    file_path = os.path.join(folder_path, wav_file)
-    sample_rate, audio_data = wavfile.read(file_path)
-
-    # Normalize the audio to avoid plotting errors
-    audio_data = audio_data / np.max(np.abs(audio_data))  # Optional normalization
-
-    plt.plot(audio_data, label=f'{wav_file} (Sample Rate: {sample_rate})')
-
-plt.title('Waveform of Multiple .wav Files')
-plt.xlabel('Sample Index')
-plt.ylabel('Amplitude')
-plt.legend(loc='upper right')
-plt.grid()
-plt.tight_layout()
-plt.savefig('centroid_plots/waveform_output.jpg')
-plt.show()
+# calculating Spectral centroid
 
 
+# Folder path containing the .wav files
+folder_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/OutAudio1'
+wav_files = [f for f in os.listdir(folder_path) if f.endswith('.wav')]
 
-# Create a figure for the plot
+# Step 2: Calculate Spectral Centroids and plot the frequency spectrum
 plt.figure(figsize=(12, 6))
-spectral_centroids= []
+spectral_centroids = []
 
-# Iterate through each audio file and calculate FFT
+# Loop through each .wav file and calculate spectral centroids
 for wav_file in wav_files:
     file_path = os.path.join(folder_path, wav_file)
     sample_rate, audio_data = wavfile.read(file_path)
 
-    # Normalize amplitude (if needed)
-    audio_data = audio_data.astype(float)  # Ensure correct dtype
-    audio_data = audio_data / (np.max(np.abs(audio_data)) + 1e-10)  # Avoid division by zero
+    # Normalize audio data
+    audio_data = audio_data.astype(float)
+    audio_data = audio_data / (np.max(np.abs(audio_data)) + 1e-10)
 
     # FFT calculation
     fft_result = np.fft.fft(audio_data)
-    fft_magnitude = np.abs(fft_result)[:len(fft_result) // 2]  # Keep only positive frequencies
+    fft_magnitude = np.abs(fft_result)[:len(fft_result)//2]
+    freq = np.fft.fftfreq(len(audio_data), d=1/sample_rate)[:len(fft_result)//2]
 
-    freq = np.fft.fftfreq(len(audio_data), d=1/sample_rate)[:len(fft_result) // 2]
-
-    # Avoid zero or near-zero magnitude affecting centroid calculation
+    # Avoid zero or near-zero magnitude
     fft_magnitude += 1e-10
 
-    # Calculate the spectral centroid
+    # Calculate spectral centroid
     spectral_centroid = np.sum(freq * fft_magnitude) / np.sum(fft_magnitude)
-    spectral_centroids.append((wav_file, spectral_centroid))
+    spectral_centroids.append((os.path.basename(wav_file), spectral_centroid))
 
     # Plot frequency spectrum
-    plt.plot(freq, 20 * np.log10(fft_magnitude), label=f"{wav_file} (centroid: {spectral_centroid:.2f} Hz)")
+    plt.plot(freq, 20 * np.log10(fft_magnitude), label=f"{os.path.basename(wav_file)} (centroid: {spectral_centroid:.2f} Hz)")
 
-    plt.xscale("log")
-    print(f'processed:{wav_file}, spectral Centroid: {spectral_centroid} Hz')
+    print(f"Processed: {os.path.basename(wav_file)}, Spectral Centroid: {spectral_centroid:.2f} Hz")
 
+# Step 3: Plot frequency spectrum for all files
 plt.title('Frequency Spectrum of Multiple .wav Files')
 plt.xlabel('Frequency (Hz)')
 plt.ylabel('Amplitude (dB)')
 plt.legend(loc='upper right')
 plt.grid()
 plt.tight_layout()
-plt.savefig('centroid_plots/output1')
 plt.show()
 
-print('\nSpectral Centroids for all Files:')
-for wav_file, centroid in spectral_centroids:
-    print(f'{wav_file}: {centroid:.2f} Hz')
+# Step 4: Create bar chart to compare spectral centroids (from the files processed)
+labels = [file[0] for file in spectral_centroids]  # Get the names of the files
+centroids = [file[1] for file in spectral_centroids]  # Get the spectral centroid values
+colors = plt.cm.get_cmap("tab10", len(spectral_centroids)).colors  # Color map for visual distinction
+
+# Create bar chart for spectral centroids comparison
+plt.figure(figsize=(8, 5))
+plt.bar(labels, centroids, color=colors)
+
+# Labels and title for the bar chart
+plt.ylabel("Spectral Centroid (Hz)")
+plt.title("Comparison of Spectral Centroids")
+
+# Rotate x-axis labels for readability
+plt.xticks(rotation=30, ha="right")
+
+# Show values on top of bars
+for i, v in enumerate(centroids):
+    plt.text(i, v + 20, f"{v:.2f}", ha="center", fontsize=10)
+
+# Display the bar chart
+plt.show()
 
 
+#calculate MSE
 
-#Calculating the MSE and correlation
+# Define folder path containing audio files
+folder_path = './OutAudio1'
 
-folder_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/OutAudio'
-
-# Load original and reconstructed files
-# Load original and reconstructed files
-original_file = os.path.join(folder_path, "original.wav")
+# Load original file
+original_file = os.path.join(folder_path, "pop.00013.wav")
 sample_rate_original, original_audio = wavfile.read(original_file)
 
-# Ensure normalization for the original signal (avoid division by zero)
-original_audio = original_audio / (np.max(np.abs(original_audio)) + 1e-10)
+# Convert original audio to float and normalize
+original_audio = original_audio.astype(np.float32)
+original_audio /= np.max(np.abs(original_audio)) + 1e-10  # Prevent division by zero
 
 # Get all reconstructed .wav files in the folder
 reconstructed_files = [f for f in os.listdir(folder_path) if f.startswith("reconstructed") and f.endswith(".wav")]
 
-# Iterate through reconstructed files for comparison
-for recon_file in reconstructed_files:
-    recon_path = os.path.join(folder_path, recon_file)
-    sample_rate_recon, recon_audio = wavfile.read(recon_path)
-
-    # Normalize reconstructed signal
-    recon_audio = recon_audio / (np.max(np.abs(recon_audio)) + 1e-10)
-
-    # Resample original audio to match reconstructed audio length
-    original_resampled = resample(original_audio, len(recon_audio))
-
-    # Calculate Mean Squared Error (MSE)
-    mse = np.mean((original_resampled - recon_audio) ** 2)
-
-    # Calculate correlation coefficient
-    correlation = np.corrcoef(original_resampled, recon_audio)[0, 1]
-
-    # Print results
-    print(f"\nComparison with {recon_file}:")
-    print(f"Original Signal Mean: {np.mean(original_resampled):.4f}, Std: {np.std(original_resampled):.4f}")
-    print(f"Reconstructed Signal Mean: {np.mean(recon_audio):.4f}, Std: {np.std(recon_audio):.4f}")
-    print(f"MSE: {mse:.4f}, Correlation: {correlation:.4f}")
-
-# Plot original and reconstructed signals
-    plt.figure(figsize=(12, 6))
-plt.plot(original_resampled, label="Original Signal", alpha=0.7)
-plt.plot(recon_audio, label=f"Reconstructed Signal ({recon_file})", alpha=0.7)
-plt.title(f"Original vs {recon_file}\nMSE: {mse:.2f}, Correlation: {correlation:.2f}")
-plt.xlabel("Sample Index")
-plt.ylabel("Amplitude")
-plt.legend()
-plt.tight_layout()
-plt.grid()
-plt.show()
-
-
-folder_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/OutAudio'
-
-# Load original audio
-original_file = os.path.join(folder_path, "original.wav")
-sample_rate_original, original_audio = wavfile.read(original_file)
-
-# Normalize the original audio
-original_audio = original_audio / (np.max(np.abs(original_audio)) + 1e-10)
-
-# Get all reconstructed .wav files in the folder
-reconstructed_files = [f for f in os.listdir(folder_path) if f.startswith("reconstructed") and f.endswith(".wav")]
-
-# Lists to store MSE and correlation values
 mse_values = []
 correlation_values = []
 file_names = []
 
-# Iterate through each reconstructed file
+# Iterate through each reconstructed file and compare with original
 for recon_file in reconstructed_files:
     recon_path = os.path.join(folder_path, recon_file)
     sample_rate_recon, recon_audio = wavfile.read(recon_path)
 
-    # Normalize the reconstructed audio
-    recon_audio = recon_audio / (np.max(np.abs(recon_audio)) + 1e-10)
+    # Convert reconstructed audio to float and normalize
+    recon_audio = recon_audio.astype(np.float32)
+    recon_audio /= np.max(np.abs(recon_audio)) + 1e-10  # Prevent division by zero
 
-    # Resample original audio to match the length of the reconstructed audio
-    original_resampled = resample(original_audio, len(recon_audio))
+    # Step 1: Resample to match sample rates
+    if sample_rate_original != sample_rate_recon:
+        recon_audio = librosa.resample(recon_audio, orig_sr=sample_rate_recon, target_sr=sample_rate_original)
 
-    # Calculate Mean Squared Error (MSE)
+    # Step 2: Trim or pad to match length
+    min_length = min(len(original_audio), len(recon_audio))
+    original_resampled = original_audio[:min_length]
+    recon_audio = recon_audio[:min_length]
+
+    # Step 3: Apply high-pass filtering to remove low-frequency noise
+    original_resampled = librosa.effects.preemphasis(original_resampled)
+    recon_audio = librosa.effects.preemphasis(recon_audio)
+
+    # Step 4: Dynamic Range Matching
+    recon_audio *= np.max(np.abs(original_resampled)) / (np.max(np.abs(recon_audio)) + 1e-10)
+
+    # Compute Mean Squared Error (MSE)
     mse = np.mean((original_resampled - recon_audio) ** 2)
-
-    # Calculate Correlation
-    correlation = np.corrcoef(original_resampled, recon_audio)[0, 1]
-
-    # Store values for plotting
     mse_values.append(mse)
+
+    # Compute correlation coefficient
+    correlation = np.corrcoef(original_resampled, recon_audio)[0, 1]
     correlation_values.append(correlation)
     file_names.append(recon_file)
 
-    # Print diagnostic information
+    # Print comparison metrics
     print(f"\nComparison with {recon_file}:")
-    print(f"MSE: {mse:.4f}, Correlation: {correlation:.4f}")
+    print(f"Original Signal Mean: {np.mean(original_resampled):.4f}, Std: {np.std(original_resampled):.4f}")
+    print(f"Reconstructed Signal Mean: {np.mean(recon_audio):.4f}, Std: {np.std(recon_audio):.4f}")
+    print(f"MSE: {mse:.6f}, Correlation: {correlation:.6f}")
 
-# Plot all MSE values on one graph
-plt.figure(figsize=(10, 6))
-plt.bar(file_names, mse_values, color='orange')
-plt.title('MSE for All Reconstructed Audio Files')
-plt.xlabel('Reconstructed File')
-plt.ylabel('MSE Value')
-plt.xticks(rotation=45, ha="right")  # Rotate file names for better visibility
+# Plot MSE values
+plt.figure(figsize=(10, 5))
+plt.bar(file_names, mse_values, color='b')
+plt.xlabel("Reconstructed Files")
+plt.ylabel("Mean Squared Error (MSE)")
+plt.title("MSE for Each Reconstructed Audio File")
+plt.xticks(rotation=45, ha='right')
 plt.tight_layout()
 plt.grid()
-plt.savefig('MSE_plots/output1')
 plt.show()
 
-
-
+# Plot Correlation values
+plt.figure(figsize=(10, 5))
+plt.bar(file_names, correlation_values, color='g')
+plt.xlabel("Reconstructed Files")
+plt.ylabel("Correlation Coefficient")
+plt.title("Correlation between Original and Reconstructed Audio Files")
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+plt.grid()
+plt.show()
 
 # Set the folder path containing the .wav files
-folder_path = 'C:/Users/HP/Desktop/TestProject/audio_reconstruction_project/OutAudio'
+folder_path = './OutAudio1'
 
 # Get all .wav files in the folder
 wav_files = [f for f in os.listdir(folder_path) if f.endswith(".wav")]
@@ -417,8 +379,9 @@ for j in range(num_files, len(axes)):
 
 # Adjust layout to prevent overlap
 plt.tight_layout()
-plt.savefig(r'C:\Users\HP\Desktop\TestProject\audio_reconstruction_project\OutAudioplots\output1')
+#plt.savefig(r'C:\Users\HP\Desktop\TestProject\audio_reconstruction_project\OutAudioplots\output4')
 # Display the plot
 plt.show()
+
 
 
